@@ -1,0 +1,223 @@
+--- /home/rodrigo/BuzzBlog/app/post/service/server/src/post_server.cpp	2022-10-08 14:09:56.202234100 +0000
++++ post_server.cpp	2022-10-30 16:21:56.908098997 +0000
+@@ -1,10 +1,18 @@
+ // Copyright (C) 2022 Georgia Tech Center for Experimental Research in Computer
+ // Systems
+ 
++/*
++ * This is a modification of the BuzzBlog's Post microservice for
++ * conducting microbenchmarks.
++ */
++
+ #include <buzzblog/gen/TPostService.h>
+ #include <buzzblog/microservice_connected_server.h>
+ #include <buzzblog/postgres_connected_server.h>
+ #include <buzzblog/utils.h>
++/////////////////////////////////// CHANGE /////////////////////////////////////
++#include <cppbench.h>
++////////////////////////////////////////////////////////////////////////////////
+ #include <thrift/protocol/TBinaryProtocol.h>
+ #include <thrift/server/TThreadedServer.h>
+ #include <thrift/transport/TBufferTransports.h>
+@@ -27,6 +35,10 @@
+  private:
+   std::shared_ptr<spdlog::logger> _rpc_logger;
+   std::shared_ptr<spdlog::logger> _query_logger;
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  pqxx::result _list_posts_func_db_res;
++  pqxx::result _create_post_func_db_res;
++////////////////////////////////////////////////////////////////////////////////
+ 
+   bool validate_attributes(const std::string& text) {
+     return (text.size() > 0 && text.size() <= 200);
+@@ -68,6 +80,31 @@
+       _rpc_logger = nullptr;
+       _query_logger = nullptr;
+     }
++/////////////////////////////////// CHANGE /////////////////////////////////////
++    // Set `_create_post_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++          "INSERT INTO Posts (text, author_id, created_at) "
++          "VALUES ('%s', %d, extract(epoch from now())) "
++          "RETURNING id, created_at";
++      sprintf(query_str, query_fmt, "Hello", 1);
++      _create_post_func_db_res = run_query(query_str, "post");
++    }
++    // Set `_list_posts_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++          "SELECT id, created_at, active, text, author_id "
++          "FROM Posts "
++          "WHERE %s "
++          "ORDER BY created_at DESC "
++          "LIMIT %d "
++          "OFFSET %d";
++      sprintf(query_str, query_fmt, "active = true AND author_id = 1", 16, 0);
++      _list_posts_func_db_res = run_query(query_str, "post");
++    }
++////////////////////////////////////////////////////////////////////////////////
+   }
+ 
+   void create_post(TPost& _return, const TRequestMetadata& request_metadata,
+@@ -219,9 +256,17 @@
+             offset);
+ 
+     // Execute query.
++/*==================================== SKIP ====================================
+     auto db_res = RPC_WRAPPER<pqxx::result>(
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++    auto db_res = RPC_WRAPPER_NOCALL<pqxx::result>(
++////////////////////////////////////////////////////////////////////////////////
+         std::bind(&TPostServiceHandler::run_query, this, std::ref(query_str),
+                   "post"),
++////////////////////////////////// CHANGE //////////////////////////////////////
++        _list_posts_func_db_res,
++////////////////////////////////////////////////////////////////////////////////
+         _query_logger,
+         "ls=post lf=list_posts db=post qt=select rid=" + request_metadata.id);
+ 
+@@ -229,9 +274,17 @@
+     std::vector<std::future<TAccount>> author_futures;
+     for (auto row : db_res) {
+       author_futures.push_back(std::async(std::launch::async, [&] {
++/*==================================== SKIP ====================================
+         return RPC_WRAPPER<TAccount>(
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++        return RPC_WRAPPER_NOCALL<TAccount>(
++////////////////////////////////////////////////////////////////////////////////
+             std::bind(&TPostServiceHandler::rpc_retrieve_standard_account, this,
+                       std::ref(request_metadata), row["author_id"].as<int>()),
++/////////////////////////////////// CHANGE /////////////////////////////////////
++            TAccount(),
++////////////////////////////////////////////////////////////////////////////////
+             _rpc_logger,
+             "ls=post lf=list_posts rs=account rf=retrieve_standard_account "
+             "rid=" +
+@@ -243,9 +296,17 @@
+     std::vector<std::future<int>> n_likes_futures;
+     for (auto row : db_res) {
+       n_likes_futures.push_back(std::async(std::launch::async, [&] {
++/*==================================== SKIP ====================================
+         return RPC_WRAPPER<int32_t>(
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++        return RPC_WRAPPER_NOCALL<int32_t>(
++////////////////////////////////////////////////////////////////////////////////
+             std::bind(&TPostServiceHandler::rpc_count_likes_of_post, this,
+                       std::ref(request_metadata), row["id"].as<int>()),
++/////////////////////////////////// CHANGE /////////////////////////////////////
++            0,
++////////////////////////////////////////////////////////////////////////////////
+             _rpc_logger,
+             "ls=post lf=list_posts rs=like rf=count_likes_of_post rid=" +
+                 request_metadata.id);
+@@ -315,7 +376,14 @@
+           cxxopts::value<std::string>()->default_value("postgres"))
+       ("postgres_password", "",
+           cxxopts::value<std::string>()->default_value("postgres"))
++/*==================================== SKIP ====================================
+       ("logging", "", cxxopts::value<int>()->default_value("1"));
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++      ("logging", "", cxxopts::value<int>()->default_value("1"))
++      ("microbenchmark_type", "",
++          cxxopts::value<std::string>()->default_value("server"));
++////////////////////////////////////////////////////////////////////////////////
+ 
+   // Parse command-line arguments.
+   auto result = options.parse(argc, argv);
+@@ -339,26 +407,71 @@
+   std::string postgres_user = result["postgres_user"].as<std::string>();
+   std::string postgres_password = result["postgres_password"].as<std::string>();
+   int logging = result["logging"].as<int>();
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  std::string microbenchmark_type =
++      result["microbenchmark_type"].as<std::string>();
++////////////////////////////////////////////////////////////////////////////////
++
++/*==================================== SKIP ====================================
++    // Create server.
++    auto socket = std::make_shared<TServerSocket>(host, port);
++    if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
++    TThreadedServer server(
++        std::make_shared<TPostServiceProcessor>(
++      std::make_shared<TPostServiceHandler>(
++          backend_filepath, microservice_connection_pool_min_size,
++          microservice_connection_pool_max_size,
++          microservice_connection_pool_allow_ephemeral,
++          postgres_connection_pool_min_size,
++          postgres_connection_pool_max_size,
++          postgres_connection_pool_allow_ephemeral, postgres_user,
++          postgres_password, logging)),
++        socket, std::make_shared<TBufferedTransportFactory>(),
++        std::make_shared<TBinaryProtocolFactory>());
++    if (threads > 0) server.setConcurrentClientLimit(threads);
++
++    // Serve requests.
++    server.serve();
++==============================================================================*/
++
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  // Create handler.
++  auto handler = std::make_shared<TPostServiceHandler>(
++      backend_filepath, microservice_connection_pool_min_size,
++      microservice_connection_pool_max_size,
++      microservice_connection_pool_allow_ephemeral,
++      postgres_connection_pool_min_size, postgres_connection_pool_max_size,
++      postgres_connection_pool_allow_ephemeral, postgres_user,
++      postgres_password, logging);
+ 
+-  // Create server.
+-  auto socket = std::make_shared<TServerSocket>(host, port);
+-  if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
+-  TThreadedServer server(
+-      std::make_shared<TPostServiceProcessor>(
+-          std::make_shared<TPostServiceHandler>(
+-              backend_filepath, microservice_connection_pool_min_size,
+-              microservice_connection_pool_max_size,
+-              microservice_connection_pool_allow_ephemeral,
+-              postgres_connection_pool_min_size,
+-              postgres_connection_pool_max_size,
+-              postgres_connection_pool_allow_ephemeral, postgres_user,
+-              postgres_password, logging)),
+-      socket, std::make_shared<TBufferedTransportFactory>(),
+-      std::make_shared<TBinaryProtocolFactory>());
+-  if (threads > 0) server.setConcurrentClientLimit(threads);
++  if (microbenchmark_type == "server") {
++    // Run `list_posts` microbenchmark.
++    {
++      std::vector<TPost> _return;
++      TRequestMetadata request_metadata;
++      TPostQuery query;
++      int32_t limit = 16;
++      int32_t offset = 0;
++      run_benchmark<void>(
++          std::bind(&TPostServiceHandler::list_posts, handler, std::ref(_return),
++                    std::ref(request_metadata), std::ref(query), std::ref(limit),
++                    std::ref(offset)),
++          nullptr, nullptr, 1000000, 180, "logs/list_posts.csv");
++    }
++  } else if (microbenchmark_type == "client") {
++    // Create server.
++    auto socket = std::make_shared<TServerSocket>(host, port);
++    if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
++    TThreadedServer server(
++        std::make_shared<TPostServiceProcessor>(handler),
++        socket, std::make_shared<TBufferedTransportFactory>(),
++        std::make_shared<TBinaryProtocolFactory>());
++    if (threads > 0) server.setConcurrentClientLimit(threads);
+ 
+-  // Serve requests.
+-  server.serve();
++    // Serve requests.
++    server.serve();
++  }
++////////////////////////////////////////////////////////////////////////////////
+ 
+   return 0;
+ }

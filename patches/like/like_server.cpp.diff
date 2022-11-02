@@ -1,0 +1,105 @@
+--- /home/rodrigo/BuzzBlog/app/like/service/server/src/like_server.cpp	2022-10-08 14:09:56.202234100 +0000
++++ like_server.cpp	2022-10-30 16:31:45.292114041 +0000
+@@ -1,9 +1,17 @@
+ // Copyright (C) 2022 Georgia Tech Center for Experimental Research in Computer
+ // Systems
+ 
++/*
++ * This is a modification of the BuzzBlog's Like microservice for
++ * conducting microbenchmarks.
++ */
++
+ #include <buzzblog/gen/TLikeService.h>
+ #include <buzzblog/microservice_connected_server.h>
+ #include <buzzblog/utils.h>
++////////////////////////////////// CHANGE //////////////////////////////////////
++#include <cppbench.h>
++////////////////////////////////////////////////////////////////////////////////
+ #include <thrift/protocol/TBinaryProtocol.h>
+ #include <thrift/server/TThreadedServer.h>
+ #include <thrift/transport/TBufferTransports.h>
+@@ -244,9 +252,17 @@
+     query.__set_second_elem(post_id);
+ 
+     // Count unique pairs.
++/*==================================== SKIP ====================================
+     return RPC_WRAPPER<int32_t>(
++==============================================================================*/
++////////////////////////////////// CHANGE //////////////////////////////////////
++    return RPC_WRAPPER_NOCALL<int32_t>(
++////////////////////////////////////////////////////////////////////////////////
+         std::bind(&TLikeServiceHandler::rpc_count, this,
+                   std::ref(request_metadata), std::ref(query)),
++////////////////////////////////// CHANGE //////////////////////////////////////
++        1,
++////////////////////////////////////////////////////////////////////////////////
+         _rpc_logger,
+         "ls=like lf=count_likes_of_post rs=uniquepair rf=count rid=" +
+             request_metadata.id);
+@@ -269,7 +285,14 @@
+           cxxopts::value<int>()->default_value("0"))
+       ("microservice_connection_pool_allow_ephemeral", "",
+           cxxopts::value<int>()->default_value("0"))
++/*==================================== SKIP ====================================
+       ("logging", "", cxxopts::value<int>()->default_value("1"));
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++      ("logging", "", cxxopts::value<int>()->default_value("1"))
++      ("microbenchmark_type", "",
++          cxxopts::value<std::string>()->default_value("server"));
++////////////////////////////////////////////////////////////////////////////////
+ 
+   // Parse command-line arguments.
+   auto result = options.parse(argc, argv);
+@@ -285,7 +308,12 @@
+   int microservice_connection_pool_allow_ephemeral =
+       result["microservice_connection_pool_allow_ephemeral"].as<int>();
+   int logging = result["logging"].as<int>();
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  std::string microbenchmark_type =
++      result["microbenchmark_type"].as<std::string>();
++////////////////////////////////////////////////////////////////////////////////
+ 
++/*==================================== SKIP ====================================
+   // Create server.
+   auto socket = std::make_shared<TServerSocket>(host, port);
+   if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
+@@ -301,6 +329,38 @@
+ 
+   // Serve requests.
+   server.serve();
++==============================================================================*/
++
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  auto handler = std::make_shared<TLikeServiceHandler>(
++      backend_filepath, microservice_connection_pool_min_size,
++      microservice_connection_pool_max_size,
++      microservice_connection_pool_allow_ephemeral, logging);
++
++  if (microbenchmark_type == "server") {
++    // Run `count_likes_of_post` microbenchmark.
++    {
++      TRequestMetadata request_metadata;
++      int32_t post_id = 1;
++      run_benchmark<int32_t>(
++          std::bind(&TLikeServiceHandler::count_likes_of_post, handler,
++                    std::ref(request_metadata), std::ref(post_id)),
++          nullptr, nullptr, 1000000, 180, "logs/count_likes_of_post.csv");
++    }
++  } else if (microbenchmark_type == "client") {
++    // Create server.
++    auto socket = std::make_shared<TServerSocket>(host, port);
++    if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
++    TThreadedServer server(
++        std::make_shared<TLikeServiceProcessor>(handler),
++        socket, std::make_shared<TBufferedTransportFactory>(),
++        std::make_shared<TBinaryProtocolFactory>());
++    if (threads > 0) server.setConcurrentClientLimit(threads);
++
++    // Serve requests.
++    server.serve();
++  }
++////////////////////////////////////////////////////////////////////////////////
+ 
+   return 0;
+ }

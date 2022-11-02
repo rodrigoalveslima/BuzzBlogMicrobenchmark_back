@@ -1,0 +1,94 @@
+--- /home/rodrigo/BuzzBlog/app/common/include/microservice_connected_server.h	2022-10-08 14:09:56.202234100 +0000
++++ back	2022-10-31 22:12:56.687602652 +0000
+@@ -24,7 +24,12 @@
+ #include <vector>
+ 
+ class MicroserviceConnectedServer : public BaseServer {
++/*==================================== SKIP ====================================
+  protected:
++==============================================================================*/
++////////////////////////////////// CHANGE //////////////////////////////////////
++ public:
++////////////////////////////////////////////////////////////////////////////////
+   MicroserviceConnectedServer(
+       const std::string& local_service_name,
+       const std::string& backend_filepath,
+@@ -72,6 +77,7 @@
+     }
+ 
+     // Initialize connection pools.
++/*==================================== SKIP ====================================
+     _account_cp =
+         std::make_shared<MicroserviceConnectionPool<account_service::Client>>(
+             local_service_name, "account", service["account"],
+@@ -119,6 +125,70 @@
+         microservice_connection_pool_min_size,
+         microservice_connection_pool_max_size,
+         microservice_connection_pool_allow_ephemeral, 30000, rpc_conn_logger);
++==============================================================================*/
++////////////////////////////////// CHANGE //////////////////////////////////////
++    if (service.count("account")) {
++      _account_cp =
++          std::make_shared<MicroserviceConnectionPool<account_service::Client>>(
++              local_service_name, "account", service["account"],
++              microservice_connection_pool_min_size,
++              microservice_connection_pool_max_size,
++              microservice_connection_pool_allow_ephemeral, 30000,
++              rpc_conn_logger);
++    }
++    if (service.count("follow")) {
++      _follow_cp =
++          std::make_shared<MicroserviceConnectionPool<follow_service::Client>>(
++              local_service_name, "follow", service["follow"],
++              microservice_connection_pool_min_size,
++              microservice_connection_pool_max_size,
++              microservice_connection_pool_allow_ephemeral, 30000,
++              rpc_conn_logger);
++    }
++    if (service.count("like")) {
++      _like_cp =
++          std::make_shared<MicroserviceConnectionPool<like_service::Client>>(
++              local_service_name, "like", service["like"],
++              microservice_connection_pool_min_size,
++              microservice_connection_pool_max_size,
++              microservice_connection_pool_allow_ephemeral, 30000,
++              rpc_conn_logger);
++    }
++    if (service.count("post")) {
++      _post_cp =
++          std::make_shared<MicroserviceConnectionPool<post_service::Client>>(
++              local_service_name, "post", service["post"],
++              microservice_connection_pool_min_size,
++              microservice_connection_pool_max_size,
++              microservice_connection_pool_allow_ephemeral, 30000,
++              rpc_conn_logger);
++    }
++    if (service.count("uniquepair")) {
++      _uniquepair_cp = std::make_shared<
++          MicroserviceConnectionPool<uniquepair_service::Client>>(
++          local_service_name, "uniquepair", service["uniquepair"],
++          microservice_connection_pool_min_size,
++          microservice_connection_pool_max_size,
++          microservice_connection_pool_allow_ephemeral, 30000, rpc_conn_logger);
++    }
++    if (service.count("trending")) {
++      _trending_cp =
++          std::make_shared<MicroserviceConnectionPool<trending_service::Client>>(
++              local_service_name, "trending", service["trending"],
++              microservice_connection_pool_min_size,
++              microservice_connection_pool_max_size,
++              microservice_connection_pool_allow_ephemeral, 30000,
++              rpc_conn_logger);
++    }
++    if (service.count("wordfilter")) {
++      _wordfilter_cp = std::make_shared<
++          MicroserviceConnectionPool<wordfilter_service::Client>>(
++          local_service_name, "wordfilter", service["wordfilter"],
++          microservice_connection_pool_min_size,
++          microservice_connection_pool_max_size,
++          microservice_connection_pool_allow_ephemeral, 30000, rpc_conn_logger);
++    }
++////////////////////////////////////////////////////////////////////////////////
+   }
+ 
+   // Account RPCs

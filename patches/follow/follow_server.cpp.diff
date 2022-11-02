@@ -1,0 +1,108 @@
+--- /home/rodrigo/BuzzBlog/app/follow/service/server/src/follow_server.cpp	2022-10-08 14:09:56.202234100 +0000
++++ follow_server.cpp	2022-10-30 16:27:47.026385214 +0000
+@@ -1,9 +1,17 @@
+ // Copyright (C) 2022 Georgia Tech Center for Experimental Research in Computer
+ // Systems
+ 
++/*
++ * This is a modification of the BuzzBlog's Follow microservice for
++ * conducting microbenchmarks.
++ */
++
+ #include <buzzblog/gen/TFollowService.h>
+ #include <buzzblog/microservice_connected_server.h>
+ #include <buzzblog/utils.h>
++////////////////////////////////// CHANGE //////////////////////////////////////
++#include <cppbench.h>
++////////////////////////////////////////////////////////////////////////////////
+ #include <thrift/protocol/TBinaryProtocol.h>
+ #include <thrift/server/TThreadedServer.h>
+ #include <thrift/transport/TBufferTransports.h>
+@@ -232,10 +240,18 @@
+ 
+   bool check_follow(const TRequestMetadata& request_metadata,
+                     const int32_t follower_id, const int32_t followee_id) {
++/*==================================== SKIP ====================================
+     return RPC_WRAPPER<bool>(
++==============================================================================*/
++////////////////////////////////// CHANGE //////////////////////////////////////
++    return RPC_WRAPPER_NOCALL<bool>(
++////////////////////////////////////////////////////////////////////////////////
+         std::bind(&TFollowServiceHandler::rpc_find, this,
+                   std::ref(request_metadata), "follow", std::ref(follower_id),
+                   std::ref(followee_id)),
++////////////////////////////////// CHANGE //////////////////////////////////////
++        false,
++////////////////////////////////////////////////////////////////////////////////
+         _rpc_logger,
+         "ls=follow lf=check_follow rs=uniquepair rf=find rid=" +
+             request_metadata.id);
+@@ -290,7 +306,14 @@
+           cxxopts::value<int>()->default_value("0"))
+       ("microservice_connection_pool_allow_ephemeral", "",
+           cxxopts::value<int>()->default_value("0"))
++/*==================================== SKIP ====================================
+       ("logging", "", cxxopts::value<int>()->default_value("1"));
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++      ("logging", "", cxxopts::value<int>()->default_value("1"))
++      ("microbenchmark_type", "",
++          cxxopts::value<std::string>()->default_value("server"));
++////////////////////////////////////////////////////////////////////////////////
+ 
+   // Parse command-line arguments.
+   auto result = options.parse(argc, argv);
+@@ -306,7 +329,12 @@
+   int microservice_connection_pool_allow_ephemeral =
+       result["microservice_connection_pool_allow_ephemeral"].as<int>();
+   int logging = result["logging"].as<int>();
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  std::string microbenchmark_type =
++      result["microbenchmark_type"].as<std::string>();
++////////////////////////////////////////////////////////////////////////////////
+ 
++/*==================================== SKIP ====================================
+   // Create server.
+   auto socket = std::make_shared<TServerSocket>(host, port);
+   if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
+@@ -322,6 +350,40 @@
+ 
+   // Serve requests.
+   server.serve();
++==============================================================================*/
++
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  auto handler = std::make_shared<TFollowServiceHandler>(
++      backend_filepath, microservice_connection_pool_min_size,
++      microservice_connection_pool_max_size,
++      microservice_connection_pool_allow_ephemeral, logging);
++
++  if (microbenchmark_type == "server") {
++    // Run `check_follow` microbenchmark.
++    {
++      TRequestMetadata request_metadata;
++      int32_t follower_id = 1;
++      int32_t followee_id = 2;
++      run_benchmark<bool>(
++          std::bind(&TFollowServiceHandler::check_follow, handler,
++                    std::ref(request_metadata), std::ref(follower_id),
++                    std::ref(followee_id)),
++          nullptr, nullptr, 1000000, 180, "logs/check_follow.csv");
++    }
++  } else if (microbenchmark_type == "client") {
++    // Create server.
++    auto socket = std::make_shared<TServerSocket>(host, port);
++    if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
++    TThreadedServer server(
++        std::make_shared<TFollowServiceProcessor>(handler),
++        socket, std::make_shared<TBufferedTransportFactory>(),
++        std::make_shared<TBinaryProtocolFactory>());
++    if (threads > 0) server.setConcurrentClientLimit(threads);
++
++    // Serve requests.
++    server.serve();
++  }
++////////////////////////////////////////////////////////////////////////////////
+ 
+   return 0;
+ }

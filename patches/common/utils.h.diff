@@ -1,0 +1,23 @@
+--- /home/rodrigo/BuzzBlog/app/common/include/utils.h	2022-10-08 14:09:56.202234100 +0000
++++ utils.h	2022-10-28 11:34:08.501414987 +0000
+@@ -34,4 +34,20 @@
+     logger->info((logline + std::string(" lat={}")).c_str(), latency.count());
+ }
+ 
++////////////////////////////////// CHANGE //////////////////////////////////////
++// Modified version of `RPC_WRAPPER` that does not call `rpc` and return
++// argument `ret`.
++template <typename U>
++U RPC_WRAPPER_NOCALL(std::function<U()> rpc, const U& ret,
++                     std::shared_ptr<spdlog::logger> logger,
++                     const std::string& logline) {
++  auto start_time = std::chrono::steady_clock::now();
++  std::chrono::duration<double> latency =
++      std::chrono::steady_clock::now() - start_time;
++  if (logger)
++    logger->info((logline + std::string(" lat={}")).c_str(), latency.count());
++  return ret;
++}
++////////////////////////////////////////////////////////////////////////////////
++
+ #endif

@@ -1,0 +1,48 @@
+--- /home/rodrigo/BuzzBlog/app/like/service/server/Dockerfile	2022-10-08 14:09:56.202234100 +0000
++++ Dockerfile	2022-10-30 16:30:24.708823243 +0000
+@@ -1,6 +1,8 @@
+ # Copyright (C) 2022 Georgia Tech Center for Experimental Research in Computer
+ # Systems
+ 
++# This is a modified file for conducting microbenchmarks.
++
+ # Define base configuration.
+ FROM ubuntu:20.04
+ MAINTAINER ral@gatech.edu
+@@ -22,6 +24,8 @@
+ ENV microservice_connection_pool_allow_ephemeral null
+ # Enable/Disable logging.
+ ENV logging null
++# Microbenchmark type.
++ENV microbenchmark_type null
+ 
+ # Install software dependencies.
+ RUN apt-get update \
+@@ -60,12 +64,21 @@
+   && unzip v2.2.1.zip \
+   && cp cxxopts-2.2.1/include/cxxopts.hpp /usr/local/include
+ 
++# Copy cppbench 1.0.
++RUN cd /tmp \
++  && wget https://github.com/rodrigoalveslima/cppbench/archive/v1.0.zip \
++  && unzip v1.0.zip \
++  && cp cppbench-1.0/include/cppbench.h /usr/local/include
++
+ # Copy service client libraries.
+ COPY include include
+ 
+ # Copy source code.
+ COPY src src
+ 
++# Create `logs` directory.
++RUN mkdir logs
++
+ # Compile source code.
+ RUN mkdir bin && g++ -o bin/like_server src/like_server.cpp \
+     include/buzzblog/gen/buzzblog_types.cpp \
+@@ -82,4 +95,4 @@
+     -I/usr/local/include
+ 
+ # Start the server.
+-CMD ["/bin/bash", "-c", "bin/like_server --host 0.0.0.0 --threads $threads --accept_backlog $accept_backlog --port $port --backend_filepath $backend_filepath --microservice_connection_pool_min_size $microservice_connection_pool_min_size --microservice_connection_pool_max_size $microservice_connection_pool_max_size --microservice_connection_pool_allow_ephemeral $microservice_connection_pool_allow_ephemeral --logging=$logging"]
++CMD ["/bin/bash", "-c", "bin/like_server --host 0.0.0.0 --threads $threads --accept_backlog $accept_backlog --port $port --backend_filepath $backend_filepath --microservice_connection_pool_min_size $microservice_connection_pool_min_size --microservice_connection_pool_max_size $microservice_connection_pool_max_size --microservice_connection_pool_allow_ephemeral $microservice_connection_pool_allow_ephemeral --logging=$logging --microbenchmark_type=$microbenchmark_type"]

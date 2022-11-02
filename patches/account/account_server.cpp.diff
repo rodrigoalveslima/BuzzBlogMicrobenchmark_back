@@ -1,0 +1,181 @@
+--- /home/rodrigo/BuzzBlog/app/account/service/server/src/account_server.cpp	2022-10-08 14:09:56.202234100 +0000
++++ account_server.cpp	2022-10-30 15:04:21.630117330 +0000
+@@ -1,10 +1,18 @@
+ // Copyright (C) 2022 Georgia Tech Center for Experimental Research in Computer
+ // Systems
+ 
++/*
++ * This is a modification of the BuzzBlog's Account microservice for
++ * conducting microbenchmarks.
++ */
++
+ #include <buzzblog/gen/TAccountService.h>
+ #include <buzzblog/microservice_connected_server.h>
+ #include <buzzblog/postgres_connected_server.h>
+ #include <buzzblog/utils.h>
++////////////////////////////////// CHANGE //////////////////////////////////////
++#include <cppbench.h>
++////////////////////////////////////////////////////////////////////////////////
+ #include <spdlog/sinks/basic_file_sink.h>
+ #include <thrift/protocol/TBinaryProtocol.h>
+ #include <thrift/server/TThreadedServer.h>
+@@ -28,6 +36,10 @@
+  private:
+   std::shared_ptr<spdlog::logger> _rpc_logger;
+   std::shared_ptr<spdlog::logger> _query_logger;
++////////////////////////////////// CHANGE //////////////////////////////////////
++  pqxx::result _retrieve_standard_account_func_db_res;
++  pqxx::result _create_account_func_db_res;
++////////////////////////////////////////////////////////////////////////////////
+ 
+   bool validate_attributes(const std::string& username,
+                            const std::string& password,
+@@ -76,6 +88,30 @@
+       _rpc_logger = nullptr;
+       _query_logger = nullptr;
+     }
++////////////////////////////////// CHANGE //////////////////////////////////////
++    // Set `_create_account_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++          "INSERT INTO Accounts (created_at, username, password, first_name, "
++          "last_name) "
++          "VALUES (extract(epoch from now()), '%s', '%s', '%s', '%s') "
++          "RETURNING id, created_at";
++      sprintf(query_str, query_fmt, "johndoe", "passwd", "John", "Doe");
++      _create_account_func_db_res = run_query(query_str, "account");
++    }
++    // Set `_retrieve_standard_account_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++          "SELECT created_at, active, username, first_name, last_name "
++          "FROM Accounts "
++          "WHERE id = %d";
++      sprintf(query_str, query_fmt,
++              _create_account_func_db_res[0][0].as<int>());
++      _retrieve_standard_account_func_db_res = run_query(query_str, "account");
++    }
++////////////////////////////////////////////////////////////////////////////////
+   }
+ 
+   void authenticate_user(TAccount& _return,
+@@ -173,9 +209,17 @@
+     sprintf(query_str, query_fmt, account_id);
+ 
+     // Execute query.
++/*==================================== SKIP ====================================
+     auto db_res = RPC_WRAPPER<pqxx::result>(
++==============================================================================*/
++////////////////////////////////// CHANGE //////////////////////////////////////
++    auto db_res = RPC_WRAPPER_NOCALL<pqxx::result>(
++////////////////////////////////////////////////////////////////////////////////
+         std::bind(&TAccountServiceHandler::run_query, this, std::ref(query_str),
+                   "account"),
++////////////////////////////////// CHANGE //////////////////////////////////////
++        _retrieve_standard_account_func_db_res,
++////////////////////////////////////////////////////////////////////////////////
+         _query_logger,
+         "ls=account lf=retrieve_standard_account db=account qt=select rid=" +
+             request_metadata.id);
+@@ -185,6 +229,7 @@
+ 
+     // Check if user follows account.
+     auto followed_by_you =
++/*==================================== SKIP ====================================
+         RPC_WRAPPER<bool>(std::bind(&TAccountServiceHandler::rpc_check_follow,
+                                     this, std::ref(request_metadata),
+                                     std::ref(request_metadata.requester_id),
+@@ -193,6 +238,18 @@
+                           "ls=account lf=retrieve_standard_account rs=follow "
+                           "rf=check_follow rid=" +
+                               request_metadata.id);
++==============================================================================*/
++////////////////////////////////// CHANGE //////////////////////////////////////
++        RPC_WRAPPER_NOCALL<bool>(
++            std::bind(&TAccountServiceHandler::rpc_check_follow, this,
++                      std::ref(request_metadata),
++                      std::ref(request_metadata.requester_id),
++                      std::ref(account_id)),
++            false,
++            _rpc_logger,
++            "ls=account lf=retrieve_standard_account rs=follow rf=check_follow "
++            "rid=" + request_metadata.id);
++////////////////////////////////////////////////////////////////////////////////
+ 
+     // Build account (standard mode).
+     _return.id = account_id;
+@@ -491,7 +548,14 @@
+           cxxopts::value<std::string>()->default_value("postgres"))
+       ("postgres_password", "",
+           cxxopts::value<std::string>()->default_value("postgres"))
++/*==================================== SKIP ====================================
+       ("logging", "", cxxopts::value<int>()->default_value("1"));
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++      ("logging", "", cxxopts::value<int>()->default_value("1"))
++      ("microbenchmark_type", "",
++          cxxopts::value<std::string>()->default_value("server"));
++////////////////////////////////////////////////////////////////////////////////
+ 
+   // Parse command-line arguments.
+   auto result = options.parse(argc, argv);
+@@ -515,7 +579,12 @@
+   std::string postgres_user = result["postgres_user"].as<std::string>();
+   std::string postgres_password = result["postgres_password"].as<std::string>();
+   int logging = result["logging"].as<int>();
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  std::string microbenchmark_type =
++      result["microbenchmark_type"].as<std::string>();
++////////////////////////////////////////////////////////////////////////////////
+ 
++/*==================================== SKIP ====================================
+   // Create server.
+   auto socket = std::make_shared<TServerSocket>(host, port);
+   if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
+@@ -535,6 +604,44 @@
+ 
+   // Serve requests.
+   server.serve();
++==============================================================================*/
++
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  // Create handler.
++  auto handler = std::make_shared<TAccountServiceHandler>(
++      backend_filepath, microservice_connection_pool_min_size,
++      microservice_connection_pool_max_size,
++      microservice_connection_pool_allow_ephemeral,
++      postgres_connection_pool_min_size, postgres_connection_pool_max_size,
++      postgres_connection_pool_allow_ephemeral, postgres_user,
++      postgres_password, logging);
++
++  if (microbenchmark_type == "server") {
++    // Run `retrieve_standard_account` microbenchmark.
++    {
++      TAccount _return;
++      TRequestMetadata request_metadata;
++      int32_t account_id = 1;
++      run_benchmark<void>(
++          std::bind(&TAccountServiceHandler::retrieve_standard_account, handler,
++                    std::ref(_return), std::ref(request_metadata),
++                    std::ref(account_id)),
++          nullptr, nullptr, 1000000, 180, "logs/retrieve_standard_account.csv");
++    }
++  } else if (microbenchmark_type == "client") {
++    // Create server.
++    auto socket = std::make_shared<TServerSocket>(host, port);
++    if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
++    TThreadedServer server(
++        std::make_shared<TAccountServiceProcessor>(handler),
++        socket, std::make_shared<TBufferedTransportFactory>(),
++        std::make_shared<TBinaryProtocolFactory>());
++    if (threads > 0) server.setConcurrentClientLimit(threads);
++
++    // Serve requests.
++    server.serve();
++  }
++////////////////////////////////////////////////////////////////////////////////
+ 
+   return 0;
+ }

@@ -1,0 +1,189 @@
+--- /home/rodrigo/BuzzBlog/app/uniquepair/service/server/src/uniquepair_server.cpp	2022-10-08 14:09:56.206234138 +0000
++++ uniquepair_server.cpp	2022-10-30 16:36:05.242731773 +0000
+@@ -1,9 +1,17 @@
+ // Copyright (C) 2022 Georgia Tech Center for Experimental Research in Computer
+ // Systems
+ 
++/*
++ * This is a modification of the BuzzBlog's UniquePair microservice for
++ * conducting microbenchmarks.
++ */
++
+ #include <buzzblog/gen/TUniquepairService.h>
+ #include <buzzblog/postgres_connected_server.h>
+ #include <buzzblog/utils.h>
++//////////////////////////////////// CHANGE ////////////////////////////////////
++#include <cppbench.h>
++////////////////////////////////////////////////////////////////////////////////
+ #include <thrift/protocol/TBinaryProtocol.h>
+ #include <thrift/server/TThreadedServer.h>
+ #include <thrift/transport/TBufferTransports.h>
+@@ -24,6 +32,11 @@
+                                   public TUniquepairServiceIf {
+  private:
+   std::shared_ptr<spdlog::logger> _query_logger;
++//////////////////////////////////// CHANGE ////////////////////////////////////
++  pqxx::result _add_func_db_res;
++  pqxx::result _count_func_db_res;
++  pqxx::result _find_func_db_res;
++////////////////////////////////////////////////////////////////////////////////
+ 
+   std::string build_where_clause(const TUniquepairQuery& query) {
+     std::ostringstream where_clause;
+@@ -54,6 +67,39 @@
+     } else {
+       _query_logger = nullptr;
+     }
++//////////////////////////////////// CHANGE ////////////////////////////////////
++    // Set `_add_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++          "INSERT INTO Uniquepairs (domain, first_elem, second_elem, "
++          "created_at) "
++          "VALUES ('%s', %d, %d, extract(epoch from now())) "
++          "RETURNING id, created_at";
++      sprintf(query_str, query_fmt, "test", 1, 2);
++      _add_func_db_res = run_query(query_str, "uniquepair");
++    }
++    // Set `_count_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++        "SELECT COUNT(*) "
++        "FROM Uniquepairs "
++        "WHERE %s";
++      sprintf(query_str, query_fmt, "domain = 'test' AND first_elem = 1");
++      _count_func_db_res = run_query(query_str, "uniquepair");
++    }
++    // Set `_find_func_db_res`.
++    {
++      char query_str[1024];
++      const char* query_fmt =
++          "SELECT id, created_at "
++          "FROM Uniquepairs "
++          "WHERE domain = '%s' AND first_elem = %d AND second_elem = %d";
++      sprintf(query_str, query_fmt, "test", 1, 2);
++      _find_func_db_res = run_query(query_str, "uniquepair");
++    }
++////////////////////////////////////////////////////////////////////////////////
+   }
+ 
+   void get(TUniquepair& _return, const TRequestMetadata& request_metadata,
+@@ -150,9 +196,17 @@
+     sprintf(query_str, query_fmt, domain.c_str(), first_elem, second_elem);
+ 
+     // Execute query.
++/*==================================== SKIP ====================================
+     auto db_res = RPC_WRAPPER<pqxx::result>(
++==============================================================================*/
++//////////////////////////////////// CHANGE ////////////////////////////////////
++    auto db_res = RPC_WRAPPER_NOCALL<pqxx::result>(
++////////////////////////////////////////////////////////////////////////////////
+         std::bind(&TUniquepairServiceHandler::run_query, this,
+                   std::ref(query_str), "uniquepair"),
++////////////////////////////////// CHANGE //////////////////////////////////////
++        _find_func_db_res,
++////////////////////////////////////////////////////////////////////////////////
+         _query_logger,
+         "ls=uniquepair lf=find db=uniquepair qt=select rid=" +
+             request_metadata.id);
+@@ -209,9 +263,17 @@
+     sprintf(query_str, query_fmt, build_where_clause(query).c_str());
+ 
+     // Execute query.
++/*==================================== SKIP ====================================
+     auto db_res = RPC_WRAPPER<pqxx::result>(
++==============================================================================*/
++//////////////////////////////////// CHANGE ////////////////////////////////////
++    auto db_res = RPC_WRAPPER_NOCALL<pqxx::result>(
++////////////////////////////////////////////////////////////////////////////////
+         std::bind(&TUniquepairServiceHandler::run_query, this,
+                   std::ref(query_str), "uniquepair"),
++////////////////////////////////// CHANGE //////////////////////////////////////
++        _count_func_db_res,
++////////////////////////////////////////////////////////////////////////////////
+         _query_logger,
+         "ls=uniquepair lf=count db=uniquepair qt=select rid=" +
+             request_metadata.id);
+@@ -240,7 +302,14 @@
+           cxxopts::value<std::string>()->default_value("postgres"))
+       ("postgres_password", "",
+           cxxopts::value<std::string>()->default_value("postgres"))
++/*==================================== SKIP ====================================
+       ("logging", "", cxxopts::value<int>()->default_value("1"));
++==============================================================================*/
++/////////////////////////////////// CHANGE /////////////////////////////////////
++      ("logging", "", cxxopts::value<int>()->default_value("1"))
++      ("microbenchmark_type", "",
++          cxxopts::value<std::string>()->default_value("server"));
++////////////////////////////////////////////////////////////////////////////////
+ 
+   // Parse command-line arguments.
+   auto result = options.parse(argc, argv);
+@@ -258,7 +327,12 @@
+   std::string postgres_user = result["postgres_user"].as<std::string>();
+   std::string postgres_password = result["postgres_password"].as<std::string>();
+   int logging = result["logging"].as<int>();
++/////////////////////////////////// CHANGE /////////////////////////////////////
++  std::string microbenchmark_type =
++      result["microbenchmark_type"].as<std::string>();
++////////////////////////////////////////////////////////////////////////////////
+ 
++/*==================================== SKIP ====================================
+   // Create server.
+   auto socket = std::make_shared<TServerSocket>(host, port);
+   if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
+@@ -275,6 +349,52 @@
+ 
+   // Serve requests.
+   server.serve();
++==============================================================================*/
++
++//////////////////////////////////// CHANGE ////////////////////////////////////
++  // Create handler.
++  auto handler = std::make_shared<TUniquepairServiceHandler>(
++      backend_filepath, postgres_connection_pool_min_size,
++      postgres_connection_pool_max_size,
++      postgres_connection_pool_allow_ephemeral, postgres_user,
++      postgres_password, logging);
++
++  if (microbenchmark_type == "server") {
++    // Run `count` microbenchmark.
++    {
++      TRequestMetadata request_metadata;
++      TUniquepairQuery query;
++      run_benchmark<void>(std::bind(&TUniquepairServiceHandler::count, handler,
++                                    std::ref(request_metadata), std::ref(query)),
++                          nullptr, nullptr, 1000000, 180, "logs/count.csv");
++    }
++
++    // Run `find` microbenchmark.
++    {
++      TRequestMetadata request_metadata;
++      std::string domain = "microbenchmark";
++      int32_t first_elem = 1;
++      int32_t second_elem = 2;
++      run_benchmark<bool>(std::bind(&TUniquepairServiceHandler::find, handler,
++                                    std::ref(request_metadata),
++                                    std::ref(domain), std::ref(first_elem),
++                                    std::ref(second_elem)),
++                          nullptr, nullptr, 1000000, 180, "logs/find.csv");
++    }
++  } else if (microbenchmark_type == "client") {
++    // Create server.
++    auto socket = std::make_shared<TServerSocket>(host, port);
++    if (acceptBacklog > 0) socket->setAcceptBacklog(acceptBacklog);
++    TThreadedServer server(
++        std::make_shared<TUniquepairServiceProcessor>(handler),
++        socket, std::make_shared<TBufferedTransportFactory>(),
++        std::make_shared<TBinaryProtocolFactory>());
++    if (threads > 0) server.setConcurrentClientLimit(threads);
++
++    // Serve requests.
++    server.serve();
++  }
++////////////////////////////////////////////////////////////////////////////////
+ 
+   return 0;
+ }
